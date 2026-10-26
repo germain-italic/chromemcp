@@ -4,7 +4,18 @@ Lance plusieurs instances Chrome isolées et connecte chacune à une session d�
 
 Le script est conçu pour Bash sous Linux. La configuration décrite ici a été utilisée sous Debian avec WSL2 et WSLg ; elle peut aussi servir de base sur d’autres distributions.
 
-![Exemple de l’inventaire Chrome et de la confirmation de lancement ; l’identité, les chemins personnels et les titres d’onglets sont masqués.](assets/chrome-launch-confirmation.png)
+Exemple fictif de l’inventaire et de la confirmation. Les titres d’onglets sont visibles ; les PID, ports et noms sont inventés.
+
+```console
+$ chrome
+Instances Chrome actuellement lancées :
+  PID 18421   port 9222  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 profil=~/.chrome-debug
+    Onglets : Documentation API | Tableau de bord local | Tests de connexion
+  PID 18703   port 9922  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 profil=~/.chrome-debug-9922
+    Onglets : Pull requests | Logs de test
+Le port 9222 est déjà utilisé. Lancer une instance Chrome supplémentaire sur le port 9531 ? [y/N] n
+Lancement annulé.
+```
 
 ## Fonctions
 
