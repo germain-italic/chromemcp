@@ -4,6 +4,8 @@ Lance plusieurs instances Chrome isolées et connecte chacune à une session d�
 
 Le script est conçu pour Bash sous Linux. La configuration décrite ici a été utilisée sous Debian avec WSL2 et WSLg ; elle peut aussi servir de base sur d’autres distributions.
 
+![Exemple de l’inventaire Chrome et de la confirmation de lancement ; l’identité, les chemins personnels et les titres d’onglets sont masqués.](assets/chrome-launch-confirmation.png)
+
 ## Fonctions
 
 - `chrome` affiche les instances de débogage déjà lancées : port, PID, profil, environnement graphique et titres de quelques onglets.
