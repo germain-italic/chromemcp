@@ -16,8 +16,9 @@ Instances Chrome actuellement lancées :
 Que veux-tu faire ?
   [l] Lancer une instance Chrome
   [a] Arrêter une instance existante
+  [u] Actualiser le script
   [q] Annuler
-Choix [l/a/q] : a
+Choix [l/a/u/q] : a
 Instances Chrome disponibles :
   1) port 9222 — PID 18421 — ~/.chrome-debug
      Onglets : Documentation API | Tableau de bord local | Tests de connexion
@@ -32,6 +33,7 @@ Signal d’arrêt envoyé à Chrome sur le port 9922 (PID 18703).
 
 - `chrome` affiche les instances de débogage déjà lancées : port, PID, profil, environnement graphique et titres de quelques onglets.
 - Si une instance existe et qu’aucun port n’est donné, `chrome` propose de lancer une autre instance, d’en arrêter une ou d’annuler.
+- Sans port explicite, `chrome` propose aussi `[u] Actualiser le script` : cette option fait un `git pull --ff-only` dans le dépôt puis recharge `~/.bashrc` dans le shell courant.
 - Chaque instance utilise un port DevTools et un profil Chrome distincts. Le port par défaut est `9222` ; les autres ports sont choisis dans la plage `9300–9999`.
 - L’option d’arrêt du menu affiche les ports et titres, puis demande le numéro de l’instance et une confirmation.
 - DevTools écoute sur `127.0.0.1` uniquement.
@@ -108,7 +110,9 @@ chrome 9633                    # lance ou rejoint l'instance sur 9633
 chrome 9633 https://example.org
 ```
 
-Quand une instance existe et que tu lances `chrome` sans port, le menu propose de lancer, d’arrêter ou d’annuler. Pour arrêter, choisis `a`, sélectionne l’instance par son numéro, puis confirme. Le script vérifie à nouveau le port et le profil avant d’envoyer `SIGTERM` au processus maître. Aucun PID n’est à saisir.
+Quand tu lances `chrome` sans port, le menu propose de lancer une instance, d’actualiser le script avec `u`, ou d’annuler. Si des instances existent, il propose aussi de les arrêter : choisis `a`, sélectionne l’instance par son numéro, puis confirme. Le script vérifie à nouveau le port et le profil avant d’envoyer `SIGTERM` au processus maître. Aucun PID n’est à saisir.
+
+Pour actualiser le dépôt et recharger les fonctions dans le shell courant, choisis `u`. La mise à jour utilise `git pull --ff-only` ; elle s’interrompt si une fusion serait nécessaire.
 
 Si `9222` est déjà utilisé et que tu choisis de lancer, `chrome` sélectionne un port libre dans `9300–9999`. Un port passé en argument, par exemple `chrome 9633`, cible directement cette instance et saute le menu.
 

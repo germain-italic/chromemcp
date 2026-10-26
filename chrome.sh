@@ -8,6 +8,7 @@
 : "${CLAUDE_CONFIG_DIR:=$HOME/.claude}"
 : "${CHROME_DARK:=1}"
 : "${CHROME_MCP_COMMAND:=npx}"
+: "${CHROME_SCRIPT_DIR:=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
 
 _chrome_wslg_ready() {
     # La disposition interne de /mnt/wslg varie selon les versions de WSLg ;
@@ -178,6 +179,21 @@ _chrome_stop_instance() {
     echo "Signal d'arrêt envoyé à Chrome sur le port ${port} (PID ${pid})."
 }
 
+# Met à jour le dépôt puis recharge la configuration du shell courant.
+_chrome_update() {
+    if ! git -C "$CHROME_SCRIPT_DIR" pull --ff-only; then
+        echo "Mise à jour impossible. Vérifie l'état du dépôt : $CHROME_SCRIPT_DIR" >&2
+        return 1
+    fi
+    if [ ! -r "$HOME/.bashrc" ]; then
+        echo "Dépôt mis à jour, mais $HOME/.bashrc est introuvable ou illisible." >&2
+        return 1
+    fi
+    # shellcheck disable=SC1090
+    source "$HOME/.bashrc"
+    echo "Script actualisé et ~/.bashrc rechargé."
+}
+
 chrome() {
     _chrome_list_running
 
@@ -189,8 +205,12 @@ chrome() {
         port="$CHROME_DEBUG_PORT"; explicit=1
     fi
 
-    if [ "$explicit" -eq 0 ] && [ "${_CHROME_RUNNING_COUNT:-0}" -gt 0 ]; then
-        printf '\nQue veux-tu faire ?\n  [l] Lancer une instance Chrome\n  [a] Arrêter une instance existante\n  [q] Annuler\nChoix [l/a/q] : '
+    if [ "$explicit" -eq 0 ]; then
+        if [ "${_CHROME_RUNNING_COUNT:-0}" -gt 0 ]; then
+            printf '\nQue veux-tu faire ?\n  [l] Lancer une instance Chrome\n  [a] Arrêter une instance existante\n  [u] Actualiser le script\n  [q] Annuler\nChoix [l/a/u/q] : '
+        else
+            printf '\nQue veux-tu faire ?\n  [l] Lancer une instance Chrome\n  [u] Actualiser le script\n  [q] Annuler\nChoix [l/u/q] : '
+        fi
         if ! read -r action </dev/tty; then
             echo
             echo "Action annulée."
@@ -199,6 +219,7 @@ chrome() {
         case "$action" in
             l|L) launch_confirmed=1 ;;
             a|A) _chrome_stop_instance; return $? ;;
+            u|U) _chrome_update; return $? ;;
             *) echo "Action annulée."; return 0 ;;
         esac
     fi
