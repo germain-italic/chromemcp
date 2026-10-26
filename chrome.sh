@@ -97,6 +97,7 @@ except Exception:
 # Affiche les instances debug existantes et leur session graphique.
 _chrome_list_running() {
     local found=0 pid cmdline port display wayland profile titles
+    _CHROME_RUNNING_COUNT=0
     printf '%s\n' "Instances Chrome actuellement lancées :"
     while read -r pid; do
         [ -r "/proc/${pid}/cmdline" ] || continue
@@ -112,13 +113,13 @@ _chrome_list_running() {
             "$pid" "${port:-?}" "${display:-non défini}" "${wayland:-non défini}" "${profile:-inconnu}"
         printf '    Onglets : %s\n' "$titles"
         found=1
+        _CHROME_RUNNING_COUNT=$((_CHROME_RUNNING_COUNT + 1))
     done < <(pgrep -f 'google-chrome|chrome' 2>/dev/null | sort -nu)
     [ "$found" -eq 1 ] || printf '%s\n' '  Aucune instance Chrome debug trouvée.'
 }
 
 # Arrête une seule instance identifiée par son port DevTools.
-# Usage : chrome-kill [port] ; sans port, choisir dans le menu.
-chrome-kill() {
+_chrome_stop_instance() {
     local -a pids=() ports=() profiles=() titles=()
     local pid cmdline arg port profile selected answer index=0
 
@@ -151,23 +152,12 @@ chrome-kill() {
         printf '     Onglets : %s\n' "${titles[index]}"
     done
 
-    if [ "$#" -gt 0 ]; then
-        selected=""
-        for index in "${!ports[@]}"; do
-            if [ "${ports[index]}" = "$1" ]; then selected="$index"; break; fi
-        done
-        if [ -z "$selected" ]; then
-            echo "Aucune instance trouvée sur le port $1." >&2
-            return 1
-        fi
-    else
-        printf 'Quelle instance arrêter ? (numéro, Entrée pour annuler) '
-        read -r answer </dev/tty || { echo; echo "Arrêt annulé."; return 1; }
-        [[ "$answer" =~ ^[0-9]+$ ]] || { echo "Arrêt annulé."; return 0; }
-        answer=$((10#$answer))
-        (( answer >= 1 && answer <= ${#pids[@]} )) || { echo "Numéro invalide ; arrêt annulé."; return 1; }
-        selected=$((answer - 1))
-    fi
+    printf 'Quelle instance arrêter ? (numéro, Entrée pour annuler) '
+    read -r answer </dev/tty || { echo; echo "Arrêt annulé."; return 1; }
+    [[ "$answer" =~ ^[0-9]+$ ]] || { echo "Arrêt annulé."; return 0; }
+    answer=$((10#$answer))
+    (( answer >= 1 && answer <= ${#pids[@]} )) || { echo "Numéro invalide ; arrêt annulé."; return 1; }
+    selected=$((answer - 1))
 
     printf 'Arrêter Chrome sur le port %s (PID %s) ? [y/N] ' \
         "${ports[selected]}" "${pids[selected]}"
@@ -190,6 +180,29 @@ chrome-kill() {
 
 chrome() {
     _chrome_list_running
+
+    # Un port passé en argument (ou dans CHROME_DEBUG_PORT) exprime déjà le choix.
+    local explicit=0 port="$CHROME_DEFAULT_PORT" action launch_confirmed=0
+    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+        port="$1"; explicit=1; shift
+    elif [ -n "${CHROME_DEBUG_PORT:-}" ]; then
+        port="$CHROME_DEBUG_PORT"; explicit=1
+    fi
+
+    if [ "$explicit" -eq 0 ] && [ "${_CHROME_RUNNING_COUNT:-0}" -gt 0 ]; then
+        printf '\nQue veux-tu faire ?\n  [l] Lancer une instance Chrome\n  [a] Arrêter une instance existante\n  [q] Annuler\nChoix [l/a/q] : '
+        if ! read -r action </dev/tty; then
+            echo
+            echo "Action annulée."
+            return 1
+        fi
+        case "$action" in
+            l|L) launch_confirmed=1 ;;
+            a|A) _chrome_stop_instance; return $? ;;
+            *) echo "Action annulée."; return 0 ;;
+        esac
+    fi
+
     [ -n "$CHROME_KEYMAP" ] && command -v setxkbmap >/dev/null 2>&1 \
         && setxkbmap "$CHROME_KEYMAP" 2>/dev/null
     _chrome_wslg_ready || return 125
@@ -212,17 +225,10 @@ chrome() {
     fi
 
     # Port : 1er argument numérique, sinon $CHROME_DEBUG_PORT, sinon 9222 (par défaut).
-    #   chrome            → 9222 si libre, sinon un port ALÉATOIRE libre (nouvelle instance)
+    #   chrome            → menu si une instance existe ; sinon lance sur le port par défaut
     #   chrome 9223       → force le port 9223 (réutilise l'onglet si déjà actif)
     # Chaque instance MCP indépendante a son port ET son --user-data-dir ; le serveur
     # MCP correspondant doit pointer sur le MÊME port (--browserUrl http://127.0.0.1:PORT).
-    local explicit=0 port="$CHROME_DEFAULT_PORT"
-    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
-        port="$1"; explicit=1; shift
-    elif [ -n "${CHROME_DEBUG_PORT:-}" ]; then
-        port="$CHROME_DEBUG_PORT"; explicit=1
-    fi
-
     # Instance debug déjà vivante sur ce port ?
     if curl -s --max-time 2 "http://127.0.0.1:${port}/json/version" >/dev/null 2>&1; then
         if [ "$explicit" -eq 1 ]; then
@@ -241,16 +247,21 @@ chrome() {
         # Port par défaut (9222) occupé → nouvelle instance sur un port aléatoire libre.
         local newport answer
         newport="$(_chrome_random_free_port)" || { echo "Aucun port libre trouvé (9300–9999)." >&2; return 1; }
-        printf 'Le port %s est déjà utilisé. Lancer une instance Chrome supplémentaire sur le port %s ? [y/N] ' "$port" "$newport"
-        if ! read -r answer </dev/tty; then
-            echo
-            echo "Lancement annulé."
-            return 1
+        if [ "$launch_confirmed" -eq 0 ]; then
+            local answer
+            printf 'Le port %s est déjà utilisé. Lancer une instance sur le port %s ? [y/N] ' "$port" "$newport"
+            if ! read -r answer </dev/tty; then
+                echo
+                echo "Lancement annulé."
+                return 1
+            fi
+            case "$answer" in
+                y|Y|yes|YES|o|O|oui|OUI) ;;
+                *) echo "Lancement annulé."; return 0 ;;
+            esac
+        else
+            echo "Port ${port} déjà utilisé → lancement sur le port ${newport}."
         fi
-        case "$answer" in
-            y|Y|yes|YES|o|O|oui|OUI) ;;
-            *) echo "Lancement annulé."; return 0 ;;
-        esac
         port="$newport"
     fi
 

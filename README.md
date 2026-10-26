@@ -4,7 +4,7 @@ Lance plusieurs instances Chrome isolées et connecte chacune à une session d�
 
 Le script est conçu pour Bash sous Linux. La configuration décrite ici a été utilisée sous Debian avec WSL2 et WSLg ; elle peut aussi servir de base sur d’autres distributions.
 
-Exemple fictif de l’inventaire et de la confirmation. Les titres d’onglets sont visibles ; les PID, ports et noms sont inventés.
+Exemple fictif. Les titres d’onglets sont visibles ; les PID, ports et noms sont inventés.
 
 ```console
 $ chrome
@@ -13,17 +13,27 @@ Instances Chrome actuellement lancées :
     Onglets : Documentation API | Tableau de bord local | Tests de connexion
   PID 18703   port 9922  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 profil=~/.chrome-debug-9922
     Onglets : Pull requests | Logs de test
-Le port 9222 est déjà utilisé. Lancer une instance Chrome supplémentaire sur le port 9531 ? [y/N] n
-Lancement annulé.
+Que veux-tu faire ?
+  [l] Lancer une instance Chrome
+  [a] Arrêter une instance existante
+  [q] Annuler
+Choix [l/a/q] : a
+Instances Chrome disponibles :
+  1) port 9222 — PID 18421 — ~/.chrome-debug
+     Onglets : Documentation API | Tableau de bord local | Tests de connexion
+  2) port 9922 — PID 18703 — ~/.chrome-debug-9922
+     Onglets : Pull requests | Logs de test
+Quelle instance arrêter ? (numéro, Entrée pour annuler) 2
+Arrêter Chrome sur le port 9922 (PID 18703) ? [y/N] y
+Signal d’arrêt envoyé à Chrome sur le port 9922 (PID 18703).
 ```
 
 ## Fonctions
 
 - `chrome` affiche les instances de débogage déjà lancées : port, PID, profil, environnement graphique et titres de quelques onglets.
+- Si une instance existe et qu’aucun port n’est donné, `chrome` propose de lancer une autre instance, d’en arrêter une ou d’annuler.
 - Chaque instance utilise un port DevTools et un profil Chrome distincts. Le port par défaut est `9222` ; les autres ports sont choisis dans la plage `9300–9999`.
-- Si `9222` est occupé, `chrome` demande confirmation avant de lancer une instance supplémentaire.
-- `chrome-kill` ouvre un menu pour arrêter une instance précise ; les titres d’onglets aident à choisir. Une confirmation est demandée avant l’arrêt.
-- `chrome-kill PORT` cible directement un port, tout en demandant confirmation.
+- L’option d’arrêt du menu affiche les ports et titres, puis demande le numéro de l’instance et une confirmation.
 - DevTools écoute sur `127.0.0.1` uniquement.
 
 ## Prérequis
@@ -96,13 +106,11 @@ chrome                         # lance Chrome sur 9222 s'il est libre
 chrome https://example.org     # ouvre une URL dans la nouvelle instance
 chrome 9633                    # lance ou rejoint l'instance sur 9633
 chrome 9633 https://example.org
-chrome-kill                    # choisir une instance dans le menu
-chrome-kill 9633               # choisir directement le port 9633
 ```
 
-Si le port `9222` répond déjà, `chrome` affiche l’inventaire puis demande avant d’ouvrir une autre instance sur un port libre. Réponds `y`, `yes`, `o` ou `oui` pour continuer ; Entrée ou toute autre réponse annule.
+Quand une instance existe et que tu lances `chrome` sans port, le menu propose de lancer, d’arrêter ou d’annuler. Pour arrêter, choisis `a`, sélectionne l’instance par son numéro, puis confirme. Le script vérifie à nouveau le port et le profil avant d’envoyer `SIGTERM` au processus maître. Aucun PID n’est à saisir.
 
-`chrome-kill` n’arrête qu’une instance à la fois et envoie `SIGTERM` au processus maître après confirmation. Il vérifie à nouveau le port et le profil juste avant l’arrêt.
+Si `9222` est déjà utilisé et que tu choisis de lancer, `chrome` sélectionne un port libre dans `9300–9999`. Un port passé en argument, par exemple `chrome 9633`, cible directement cette instance et saute le menu.
 
 Les profils sont enregistrés dans `~/.chrome-debug` pour le port par défaut, puis dans `~/.chrome-debug-PORT` pour les autres ports. Les journaux d’une instance se trouvent dans `chrome.stderr.log`, dans son profil.
 
