@@ -122,21 +122,20 @@ _chrome_list_running() {
 # Arrête une seule instance identifiée par son port DevTools.
 _chrome_stop_instance() {
     local -a pids=() ports=() profiles=() titles=()
-    local pid cmdline arg port profile selected answer index=0
+    local pid cmdline port profile selected answer index=0
 
     while read -r pid; do
         [ -r "/proc/${pid}/cmdline" ] || continue
-        local -a argv=()
-        mapfile -d '' -t argv <"/proc/${pid}/cmdline"
-        port="" profile=""; local is_browser=1
-        for arg in "${argv[@]}"; do
-            case "$arg" in
-                --remote-debugging-port=*) port="${arg#*=}" ;;
-                --user-data-dir=*) profile="${arg#*=}" ;;
-                --type=*) is_browser=0 ;;
-            esac
-        done
-        [[ "$is_browser" -eq 1 && "$port" =~ ^[0-9]+$ ]] || continue
+        # Employer exactement le même critère que l'affichage : certaines
+        # versions de Chrome exposent les arguments différemment dans argv.
+        # /proc/<pid>/cmdline conserve la ligne complète séparée par des NUL ;
+        # sa représentation avec espaces est celle déjà utilisée ci-dessus.
+        cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline")
+        [[ "$cmdline" == *"--remote-debugging-port="* ]] || continue
+        [[ "$cmdline" == *"--type="* ]] && continue
+        port=$(sed -n 's/.*--remote-debugging-port=\([0-9][0-9]*\).*/\1/p' <<<"$cmdline")
+        profile=$(sed -n 's/.*--user-data-dir=\([^ ]*\).*/\1/p' <<<"$cmdline")
+        [[ "$port" =~ ^[0-9]+$ ]] || continue
         pids+=("$pid"); ports+=("$port"); profiles+=("${profile:-inconnu}")
         titles+=("$(_chrome_tab_titles "$port")")
     done < <(pgrep -f 'google-chrome|chrome' 2>/dev/null | sort -nu)
@@ -194,6 +193,13 @@ _chrome_update() {
     echo "Script actualisé et ~/.bashrc rechargé."
 }
 
+# Recharge la copie locale sans modifier le dépôt ni ~/.bashrc.
+_chrome_reload() {
+    # shellcheck disable=SC1090
+    source "$CHROME_SCRIPT_DIR/chrome.sh" || return 1
+    echo "Script local rechargé depuis $CHROME_SCRIPT_DIR/chrome.sh."
+}
+
 chrome() {
     _chrome_list_running
 
@@ -207,9 +213,9 @@ chrome() {
 
     if [ "$explicit" -eq 0 ]; then
         if [ "${_CHROME_RUNNING_COUNT:-0}" -gt 0 ]; then
-            printf '\nQue veux-tu faire ?\n  [l] Lancer une instance Chrome\n  [a] Arrêter une instance existante\n  [u] Actualiser le script\n  [q] Annuler\nChoix [l/a/u/q] : '
+            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [k] Arrêter une instance existante\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/k/r/g/q] : '
         else
-            printf '\nQue veux-tu faire ?\n  [l] Lancer une instance Chrome\n  [u] Actualiser le script\n  [q] Annuler\nChoix [l/u/q] : '
+            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/r/g/q] : '
         fi
         if ! read -r action </dev/tty; then
             echo
@@ -217,9 +223,10 @@ chrome() {
             return 1
         fi
         case "$action" in
-            l|L) launch_confirmed=1 ;;
-            a|A) _chrome_stop_instance; return $? ;;
-            u|U) _chrome_update; return $? ;;
+            n|N) launch_confirmed=1 ;;
+            k|K) _chrome_stop_instance; return $? ;;
+            r|R) _chrome_reload; return $? ;;
+            g|G) _chrome_update; return $? ;;
             *) echo "Action annulée."; return 0 ;;
         esac
     fi
