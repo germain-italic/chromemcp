@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500" role="img" aria-labelledby="title desc">
+  <title id="title">Menu principal de chrome</title>
+  <desc id="desc">Le menu principal inclut l’option d’ouvrir le dépôt du projet sur GitHub dans Chrome.</desc>
+  <rect width="960" height="500" rx="14" fill="#0b1220"/>
+  <path d="M14 0h932a14 14 0 0 1 14 14v34H0V14A14 14 0 0 1 14 0Z" fill="#1e293b"/>
+  <circle cx="25" cy="24" r="6" fill="#f87171"/><circle cx="47" cy="24" r="6" fill="#fbbf24"/><circle cx="69" cy="24" r="6" fill="#4ade80"/>
+  <text x="480" y="29" fill="#cbd5e1" font-family="sans-serif" font-size="14" text-anchor="middle">germain@G18: ~</text>
+  <g fill="#e2e8f0" font-family="DejaVu Sans Mono, monospace" font-size="18">
+    <text x="28" y="82">Instances Chrome actuellement lancées :</text>
+    <text x="28" y="114">  Port 9222 — PID 18421 — Profil : ~/.chrome-debug</text>
+    <text x="28" y="146">    État : DevTools disponible</text>
+    <text x="28" y="178">    • newtab — New Tab</text>
+    <text x="28" y="218">Que souhaitez-vous faire ?</text>
+    <text x="28" y="250">  [n] Lancer une instance Chrome</text>
+    <text x="28" y="282">  [k] Arrêter une instance existante</text>
+    <text x="28" y="314" fill="#7dd3fc">  [o] Ouvrir le projet sur GitHub (dans Chrome)</text>
+    <text x="28" y="346">  [c] Configuration</text>
+    <text x="28" y="378">  [r] Recharger le script local</text>
+    <text x="28" y="410">  [g] Actualiser depuis Git</text>
+    <text x="28" y="442">  [q] Quitter</text>
+    <text x="28" y="474">Choix [n/k/o/c/r/g/q] : <tspan fill="#4ade80">o</tspan></text>
+  </g>
+</svg>

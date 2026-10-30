@@ -21,11 +21,12 @@ Instances Chrome actuellement lancées :
 Que souhaitez-vous faire ?
   [n] Lancer une instance Chrome
   [k] Arrêter une instance existante
+  [o] Ouvrir le projet sur GitHub (dans Chrome)
   [c] Configuration
   [r] Recharger le script local
   [g] Actualiser depuis Git
   [q] Quitter
-Choix [n/k/c/r/g/q] : k
+Choix [n/k/o/c/r/g/q] : k
 Instances Chrome disponibles :
   1) port 9222 — PID 18421 — ~/.chrome-debug
      DevTools : disponible
@@ -42,18 +43,24 @@ Signal d’arrêt envoyé à Chrome sur le port 9922 (PID 18703).
 
 Que souhaitez-vous faire ?
   [n] Lancer une instance Chrome
+  [o] Ouvrir le projet sur GitHub (dans Chrome)
   [c] Configuration
   [r] Recharger le script local
   [g] Actualiser depuis Git
   [q] Quitter
-Choix [n/c/r/g/q] : q
+Choix [n/o/c/r/g/q] : q
 Session chrome terminée.
 ```
+
+Le menu principal est illustré ci-dessous ; les informations d’instance sont fictives.
+
+![Menu principal avec l’option GitHub](screenshots/main-menu.svg)
 
 ## Fonctions
 
 - `chrome` affiche les instances de débogage déjà lancées : port, PID, profil, état DevTools et titres d’onglets préfixés par leur nom d’hôte.
 - Sans port explicite, `chrome` garde le menu ouvert après chaque action. Choisissez `[q] Quitter` pour terminer la session interactive.
+- `[o]` ouvre le dépôt `germain-italic/chromemcp` dans l’instance Chrome du port par défaut, dans un nouvel onglet si elle est déjà lancée.
 - Sans port explicite, `chrome` propose `[c] Configuration`, `[r] Recharger le script local` pour recharger immédiatement la copie du dépôt sans réseau, et `[g] Actualiser depuis Git` pour faire un `git pull --ff-only` puis recharger `~/.bashrc`.
 - Chaque instance utilise un port DevTools et un profil Chrome distincts. Le port par défaut est `9222` ; les autres ports sont choisis dans la plage `9300–9999`. Chrome verrouille un dossier de profil : deux instances simultanées ne peuvent pas partager le même dossier.
 - L’option d’arrêt du menu affiche les ports et titres, puis demande le numéro de l’instance et une confirmation.
@@ -129,7 +136,7 @@ chrome 9633                    # lance ou rejoint l'instance sur 9633
 chrome 9633 https://example.org
 ```
 
-Quand vous lancez `chrome` sans port, le menu permet de lancer une instance avec `n`, d’ouvrir la configuration avec `c`, de recharger la copie locale avec `r`, d’actualiser depuis Git avec `g`, ou de quitter avec `q`. Le menu revient après le lancement ou l’arrêt d’une instance. La configuration permet de choisir les profils WSL et Windows, de régler la taille de lancement et de relier Codex, Claude Code, ou les deux à Chrome WSL et/ou Chrome hôte. Si des instances WSL existent, choisissez `k`, sélectionnez l’instance par son numéro, puis confirmez son arrêt.
+Quand vous lancez `chrome` sans port, le menu permet de lancer une instance avec `n`, d’ouvrir le dépôt GitHub dans Chrome avec `o`, d’ouvrir la configuration avec `c`, de recharger la copie locale avec `r`, d’actualiser depuis Git avec `g`, ou de quitter avec `q`. Le menu revient après le lancement ou l’arrêt d’une instance. La configuration permet de choisir les profils WSL et Windows, de régler la taille de lancement et de relier Codex, Claude Code, ou les deux à Chrome WSL et/ou Chrome hôte. Si des instances WSL existent, choisissez `k`, sélectionnez l’instance par son numéro, puis confirmez son arrêt.
 
 Pour recharger les fonctions depuis les fichiers locaux sans toucher au dépôt, choisissez `r`. Pour actualiser le dépôt et recharger les fonctions dans le shell courant, choisissez `g`. La mise à jour utilise `git pull --ff-only` ; elle s’interrompt si une fusion serait nécessaire.
 

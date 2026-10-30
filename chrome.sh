@@ -713,6 +713,7 @@ _chrome_action() {
 
     # Un port passé en argument (ou dans CHROME_DEBUG_PORT) exprime déjà le choix.
     local explicit=0 port="$CHROME_DEFAULT_PORT" action launch_confirmed=0
+    local project_url='https://github.com/germain-italic/chromemcp'
     if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
         port="$1"; explicit=1; shift
     elif [ -n "${CHROME_DEBUG_PORT:-}" ]; then
@@ -722,9 +723,9 @@ _chrome_action() {
     if [ "$explicit" -eq 0 ]; then
       while true; do
         if [ "${_CHROME_RUNNING_COUNT:-0}" -gt 0 ]; then
-            printf '\nQue souhaitez-vous faire ?\n  [n] Lancer une instance Chrome\n  [k] Arrêter une instance existante\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Quitter\nChoix [n/k/c/r/g/q] : '
+            printf '\nQue souhaitez-vous faire ?\n  [n] Lancer une instance Chrome\n  [k] Arrêter une instance existante\n  [o] Ouvrir le projet sur GitHub (dans Chrome)\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Quitter\nChoix [n/k/o/c/r/g/q] : '
         else
-            printf '\nQue souhaitez-vous faire ?\n  [n] Lancer une instance Chrome\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Quitter\nChoix [n/c/r/g/q] : '
+            printf '\nQue souhaitez-vous faire ?\n  [n] Lancer une instance Chrome\n  [o] Ouvrir le projet sur GitHub (dans Chrome)\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Quitter\nChoix [n/o/c/r/g/q] : '
         fi
         if ! read -r action </dev/tty; then
             echo
@@ -734,6 +735,7 @@ _chrome_action() {
         case "$action" in
             n|N) launch_confirmed=1 ;;
             k|K) _chrome_stop_instance; _chrome_list_running ;;
+            o|O) set -- "$project_url"; explicit=1; launch_confirmed=1 ;;
             c|C) _chrome_config_menu; _chrome_list_running ;;
             r|R)
                 _chrome_reload || return $?
