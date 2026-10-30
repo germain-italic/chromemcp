@@ -2,13 +2,33 @@
 # Lance plusieurs instances Chrome isolées et les expose au serveur MCP DevTools.
 
 : "${CHROME_DEFAULT_PORT:=9222}"
+: "${CHROME_PROFILE_CONFIG:=$HOME/.config/chromemcp/profile-dir}"
+if [ -z "${CHROME_PROFILE_DIR+x}" ]; then
+    if [ -r "$CHROME_PROFILE_CONFIG" ]; then
+        IFS= read -r CHROME_PROFILE_DIR <"$CHROME_PROFILE_CONFIG" || true
+    fi
+fi
 : "${CHROME_PROFILE_DIR:=$HOME/.chrome-debug}"
+: "${CHROME_PROFILE_NAME_CONFIG:=$HOME/.config/chromemcp/profile-name}"
+if [ -z "${CHROME_PROFILE_NAME+x}" ]; then
+    if [ -r "$CHROME_PROFILE_NAME_CONFIG" ]; then
+        IFS= read -r CHROME_PROFILE_NAME <"$CHROME_PROFILE_NAME_CONFIG" || true
+    fi
+fi
+: "${CHROME_PROFILE_NAME:=Default}"
+: "${CHROME_HOST_PROFILE_CONFIG:=$HOME/.config/chromemcp/host-user-data-dir}"
+if [ -z "${CHROME_HOST_USER_DATA_DIR+x}" ]; then
+    if [ -r "$CHROME_HOST_PROFILE_CONFIG" ]; then
+        IFS= read -r CHROME_HOST_USER_DATA_DIR <"$CHROME_HOST_PROFILE_CONFIG" || true
+    fi
+fi
 : "${CHROME_KEYMAP=fr}"
 : "${CHROME_BIN:=google-chrome}"
 : "${CLAUDE_CONFIG_DIR:=$HOME/.claude}"
 : "${CHROME_DARK:=1}"
 : "${CHROME_MCP_COMMAND:=npx}"
 : "${CHROME_SCRIPT_DIR:=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+: "${CHROME_HOST_MCP_LAUNCHER:=$HOME/.local/bin/chrome-windows-mcp}"
 
 _chrome_wslg_ready() {
     # La disposition interne de /mnt/wslg varie selon les versions de WSLg ;
@@ -35,6 +55,20 @@ _chrome_wslg_ready() {
 _chrome_data_dir() {
     if [ "$1" = "$CHROME_DEFAULT_PORT" ]; then echo "$CHROME_PROFILE_DIR"
     else echo "${CHROME_PROFILE_DIR}-$1"; fi
+}
+
+_chrome_process_profile() {
+    local pid="$1" arg profile="" next=0
+    local -a argv=()
+    mapfile -d '' -t argv <"/proc/${pid}/cmdline" 2>/dev/null || return 0
+    for arg in "${argv[@]}"; do
+        if [ "$next" -eq 1 ]; then profile="$arg"; next=0; continue; fi
+        case "$arg" in
+            --user-data-dir=*) profile="${arg#*=}" ;;
+            --user-data-dir) next=1 ;;
+        esac
+    done
+    printf '%s' "$profile"
 }
 
 # Trouve un port TCP libre. La vérification et l'ouverture du port par Chrome
@@ -82,11 +116,19 @@ _chrome_tab_titles() {
     if command -v python3 >/dev/null 2>&1; then
         printf '%s\n' "$response" | python3 -c '
 import json, sys
+from urllib.parse import urlparse
 try:
     targets = json.load(sys.stdin)
-    titles = [" ".join((t.get("title") or t.get("url") or "(sans titre)").split())[:70]
-              for t in targets if t.get("type") == "page"]
-    print(" | ".join(titles[:3]) if titles else "aucun onglet")
+    titles = []
+    for target in targets:
+        if target.get("type") != "page":
+            continue
+        url = target.get("url") or ""
+        host = urlparse(url).hostname
+        title = " ".join((target.get("title") or url or "(sans titre)").split())
+        label = f"{host} — {title}" if host else title
+        titles.append(label[:77] + "…" if len(label) > 78 else label)
+    print("\n".join(titles[:5]) if titles else "aucun onglet")
 except Exception:
     print("titres indisponibles")
 ' 2>/dev/null || printf '%s' 'titres indisponibles'
@@ -95,9 +137,10 @@ except Exception:
     fi
 }
 
-# Affiche les instances debug existantes et leur session graphique.
+# Affiche les instances debug existantes avec leurs informations utiles.
 _chrome_list_running() {
-    local found=0 pid cmdline port display wayland profile titles
+    local found=0 pid cmdline port profile titles state title active orphan
+    local -a active_profiles=() profile_dirs=()
     _CHROME_RUNNING_COUNT=0
     printf '%s\n' "Instances Chrome actuellement lancées :"
     while read -r pid; do
@@ -106,17 +149,37 @@ _chrome_list_running() {
         [[ "$cmdline" == *"--remote-debugging-port="* ]] || continue
         [[ "$cmdline" == *"--type="* ]] && continue
         port=$(sed -n 's/.*--remote-debugging-port=\([0-9][0-9]*\).*/\1/p' <<<"$cmdline")
-        profile=$(sed -n 's/.*--user-data-dir=\([^ ]*\).*/\1/p' <<<"$cmdline")
-        display=$(tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -n 1)
-        wayland=$(tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | sed -n 's/^WAYLAND_DISPLAY=//p' | head -n 1)
+        profile=$(_chrome_process_profile "$pid")
         titles=$(_chrome_tab_titles "$port")
-        printf '  PID %-7s port %-5s DISPLAY=%s WAYLAND_DISPLAY=%s profil=%s\n' \
-            "$pid" "${port:-?}" "${display:-non défini}" "${wayland:-non défini}" "${profile:-inconnu}"
-        printf '    Onglets : %s\n' "$titles"
+        printf '  Port %s — PID %s — Profil : %s\n' \
+            "${port:-?}" "$pid" "${profile:-inconnu}"
+        if curl -fsS --max-time 1 "http://127.0.0.1:${port}/json/version" >/dev/null 2>&1; then
+            state="DevTools disponible"
+        else
+            state="DevTools indisponible"
+        fi
+        printf '    État : %s\n' "$state"
+        while IFS= read -r title; do printf '    • %s\n' "$title"; done <<<"$titles"
+        active_profiles+=("${profile:-inconnu}")
         found=1
         _CHROME_RUNNING_COUNT=$((_CHROME_RUNNING_COUNT + 1))
     done < <(pgrep -f 'google-chrome|chrome' 2>/dev/null | sort -nu)
     [ "$found" -eq 1 ] || printf '%s\n' '  Aucune instance Chrome debug trouvée.'
+
+    profile_dirs=("$CHROME_PROFILE_DIR" "$CHROME_PROFILE_DIR"-*)
+    orphan=0
+    for profile in "${profile_dirs[@]}"; do
+        [ -d "$profile" ] || continue
+        active=0
+        for pid in "${active_profiles[@]}"; do
+            [ "$pid" = "$profile" ] && { active=1; break; }
+        done
+        if [ "$active" -eq 0 ]; then
+            if [ "$orphan" -eq 0 ]; then printf '\nProfils sans instance active :\n'; fi
+            printf '  %s\n' "$profile"
+            orphan=1
+        fi
+    done
 }
 
 # Arrête une seule instance identifiée par son port DevTools.
@@ -134,7 +197,7 @@ _chrome_stop_instance() {
         [[ "$cmdline" == *"--remote-debugging-port="* ]] || continue
         [[ "$cmdline" == *"--type="* ]] && continue
         port=$(sed -n 's/.*--remote-debugging-port=\([0-9][0-9]*\).*/\1/p' <<<"$cmdline")
-        profile=$(sed -n 's/.*--user-data-dir=\([^ ]*\).*/\1/p' <<<"$cmdline")
+        profile=$(_chrome_process_profile "$pid")
         [[ "$port" =~ ^[0-9]+$ ]] || continue
         pids+=("$pid"); ports+=("$port"); profiles+=("${profile:-inconnu}")
         titles+=("$(_chrome_tab_titles "$port")")
@@ -147,9 +210,14 @@ _chrome_stop_instance() {
 
     echo "Instances Chrome disponibles :"
     for index in "${!pids[@]}"; do
-        printf '  %d) port %s — PID %s — %s\n' "$((index + 1))" "${ports[index]}" \
+        printf '  %d) port %s — PID %s — profil : %s\n' "$((index + 1))" "${ports[index]}" \
             "${pids[index]}" "${profiles[index]}"
-        printf '     Onglets : %s\n' "${titles[index]}"
+        if curl -fsS --max-time 1 "http://127.0.0.1:${ports[index]}/json/version" >/dev/null 2>&1; then
+            printf '     DevTools : disponible\n'
+        else
+            printf '     DevTools : indisponible\n'
+        fi
+        while IFS= read -r title; do printf '     • %s\n' "$title"; done <<<"${titles[index]}"
     done
 
     printf 'Quelle instance arrêter ? (numéro, Entrée pour annuler) '
@@ -200,6 +268,359 @@ _chrome_reload() {
     echo "Script local rechargé depuis $CHROME_SCRIPT_DIR/chrome.sh."
 }
 
+# Renvoie les noms de profils Chrome présents dans un dossier de données.
+_chrome_profile_children() {
+    local root="$1" entry
+    local -a names=()
+    for entry in "$root"/Default "$root"/Profile\ * "$root"/Guest\ Profile; do
+        [ -d "$entry" ] && names+=("${entry##*/}")
+    done
+    if [ "${#names[@]}" -gt 0 ]; then printf '%s' "${names[*]}"
+    else printf '%s' 'aucun sous-profil détecté'; fi
+}
+
+_chrome_select_wsl_profile_name() {
+    local root="$1" action entry name index selected
+    local -a names=()
+    for entry in "$root"/Default "$root"/Profile\ * "$root"/Guest\ Profile; do
+        [ -d "$entry" ] && names+=("${entry##*/}")
+    done
+    if [ "${#names[@]}" -eq 0 ]; then
+        name='Default'
+    elif [ "${#names[@]}" -eq 1 ]; then
+        name="${names[0]}"
+    else
+        printf '\nSous-profils dans %s\n' "$root"
+        for index in "${!names[@]}"; do printf '  %d) %s\n' "$((index + 1))" "${names[index]}"; done
+        printf '  [m] Saisir un nom\n  [q] Annuler\nChoix : '
+        read -r action </dev/tty || { echo; return 1; }
+        case "$action" in
+            m|M)
+                printf 'Nom du sous-profil (ex. Profile 1) : '
+                read -r name </dev/tty || { echo; return 1; }
+                [ -n "$name" ] || { echo 'Choix annulé.'; return 1; }
+                ;;
+            q|Q) return 1 ;;
+            *)
+                [[ "$action" =~ ^[0-9]+$ ]] || { echo 'Choix invalide.'; return 1; }
+                selected=$((10#$action - 1))
+                (( selected >= 0 && selected < ${#names[@]} )) || { echo 'Choix invalide.'; return 1; }
+                name="${names[selected]}"
+                ;;
+        esac
+    fi
+    mkdir -p "$(dirname -- "$CHROME_PROFILE_NAME_CONFIG")" || return 1
+    printf '%s\n' "$name" >"$CHROME_PROFILE_NAME_CONFIG" || return 1
+    CHROME_PROFILE_NAME="$name"
+    printf 'Sous-profil WSL enregistré : %s\n' "$CHROME_PROFILE_NAME"
+}
+
+_chrome_windows_local_appdata() {
+    command -v powershell.exe >/dev/null 2>&1 || return 1
+    powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("LocalApplicationData")' 2>/dev/null | tr -d '\r'
+}
+
+_chrome_windows_path() {
+    case "$1" in
+        /*) wslpath -w -- "$1" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+_chrome_profile_menu_wsl() {
+    local action path answer index selected
+    local -a candidates=() roots=()
+    roots+=("$CHROME_PROFILE_DIR" "$CHROME_PROFILE_DIR"-*)
+    roots+=("$HOME/.chrome-debug" "$HOME/.chrome-debug"-*)
+    roots+=("$HOME/.config/google-chrome" "$HOME/.config/google-chrome"-*)
+    roots+=("$HOME/.config/chromium")
+    for path in "${roots[@]}"; do
+        [ -d "$path" ] || continue
+        local duplicate=0
+        for answer in "${candidates[@]}"; do [ "$answer" = "$path" ] && duplicate=1; done
+        [ "$duplicate" -eq 1 ] || candidates+=("$path")
+    done
+
+    printf '\nProfil racine de Chrome WSL (actuel : %s)\n' "$CHROME_PROFILE_DIR"
+    if [ "${#candidates[@]}" -eq 0 ]; then
+        printf '  Aucun dossier de profil connu trouvé.\n'
+    else
+        for index in "${!candidates[@]}"; do
+            printf '  %d) %s — profils : %s\n' "$((index + 1))" "${candidates[index]}" \
+                "$(_chrome_profile_children "${candidates[index]}")"
+        done
+    fi
+    printf '  [m] Saisir un chemin manuellement\n  [d] Restaurer ~/.chrome-debug\n  [r] Retour\nChoix : '
+    read -r action </dev/tty || { echo; return 1; }
+    case "$action" in
+        m|M)
+            printf 'Chemin WSL (Entrée pour annuler) : '
+            read -r path </dev/tty || { echo; return 1; }
+            [ -n "$path" ] || { echo 'Modification annulée.'; return 0; }
+            case "$path" in
+                '~') path="$HOME" ;;
+                '~/'*) path="$HOME/${path#~/}" ;;
+            esac
+            ;;
+        d|D) path="$HOME/.chrome-debug" ;;
+        r|R) return 0 ;;
+        *)
+            [[ "$action" =~ ^[0-9]+$ ]] || { echo 'Choix invalide.'; return 1; }
+            selected=$((10#$action - 1))
+            (( selected >= 0 && selected < ${#candidates[@]} )) || { echo 'Choix invalide.'; return 1; }
+            path="${candidates[selected]}"
+            ;;
+    esac
+    mkdir -p "$(dirname -- "$CHROME_PROFILE_CONFIG")" || return 1
+    printf '%s\n' "$path" >"$CHROME_PROFILE_CONFIG" || return 1
+    CHROME_PROFILE_DIR="$path"
+    printf 'Profil WSL par défaut enregistré : %s\n' "$CHROME_PROFILE_DIR"
+    _chrome_select_wsl_profile_name "$CHROME_PROFILE_DIR" || return $?
+}
+
+_chrome_profile_menu_host() {
+    local action path appdata appdata_linux candidate_win candidate_linux answer index selected
+    local -a candidates_win=() candidates_unix=()
+    appdata=$(_chrome_windows_local_appdata) || {
+        echo 'PowerShell Windows est nécessaire pour rechercher les profils de l’hôte.' >&2
+        return 1
+    }
+    appdata_linux=$(wslpath -u "$appdata") || return 1
+    if [ -z "${CHROME_HOST_USER_DATA_DIR:-}" ]; then
+        CHROME_HOST_USER_DATA_DIR="$appdata\Google\Chrome\User Data"
+    fi
+    CHROME_HOST_USER_DATA_DIR=$(_chrome_windows_path "$CHROME_HOST_USER_DATA_DIR") || return 1
+    candidates_win+=("$CHROME_HOST_USER_DATA_DIR")
+    for candidate_win in \
+        "$appdata\Google\Chrome\User Data" \
+        "$appdata\Google\Chrome Beta\User Data" \
+        "$appdata\Google\Chrome Dev\User Data" \
+        "$appdata\Google\Chrome SxS\User Data" \
+        "$appdata\Google\Chrome for Testing\User Data" \
+        "$appdata\Chromium\User Data"; do
+        candidate_linux=$(wslpath -u "$candidate_win" 2>/dev/null) || continue
+        [ -d "$candidate_linux" ] || continue
+        local duplicate=0
+        for answer in "${candidates_win[@]}"; do [ "$answer" = "$candidate_win" ] && duplicate=1; done
+        [ "$duplicate" -eq 1 ] || candidates_win+=("$candidate_win")
+    done
+    for candidate_win in "${candidates_win[@]}"; do
+        [ -n "$candidate_win" ] || continue
+        candidate_linux=$(wslpath -u "$candidate_win" 2>/dev/null) || candidate_linux=''
+        candidates_unix+=("$candidate_linux")
+    done
+
+    printf '\nDossiers de données Chrome Windows (actuel : %s)\n' "${CHROME_HOST_USER_DATA_DIR:-non défini}"
+    for index in "${!candidates_win[@]}"; do
+        candidate_linux="${candidates_unix[index]}"
+        if [ -n "$candidate_linux" ] && [ -d "$candidate_linux" ]; then
+            printf '  %d) %s — profils : %s\n' "$((index + 1))" "${candidates_win[index]}" \
+                "$(_chrome_profile_children "$candidate_linux")"
+        else
+            printf '  %d) %s\n' "$((index + 1))" "${candidates_win[index]}"
+        fi
+    done
+    printf '  [m] Saisir un chemin manuellement\n  [d] Profil Chrome Stable par défaut\n  [r] Retour\nChoix : '
+    read -r action </dev/tty || { echo; return 1; }
+    case "$action" in
+        m|M)
+            printf 'Dossier de données Windows (Entrée pour annuler) : '
+            read -r path </dev/tty || { echo; return 1; }
+            [ -n "$path" ] || { echo 'Modification annulée.'; return 0; }
+            case "$path" in
+                /*) path=$(wslpath -w "$path") || return 1 ;;
+            esac
+            ;;
+        d|D) path="$appdata\Google\Chrome\User Data" ;;
+        r|R) return 0 ;;
+        *)
+            [[ "$action" =~ ^[0-9]+$ ]] || { echo 'Choix invalide.'; return 1; }
+            selected=$((10#$action - 1))
+            (( selected >= 0 && selected < ${#candidates_win[@]} )) || { echo 'Choix invalide.'; return 1; }
+            path="${candidates_win[selected]}"
+            ;;
+    esac
+    mkdir -p "$(dirname -- "$CHROME_HOST_PROFILE_CONFIG")" || return 1
+    printf '%s\n' "$path" >"$CHROME_HOST_PROFILE_CONFIG" || return 1
+    CHROME_HOST_USER_DATA_DIR="$path"
+    printf 'Profil hôte enregistré : %s\n' "$CHROME_HOST_USER_DATA_DIR"
+    printf 'Ce réglage désigne le dossier de données Chrome, qui peut contenir plusieurs profils.\n'
+    if [ -x "$CHROME_HOST_MCP_LAUNCHER" ]; then
+        _chrome_write_windows_mcp_launcher >/dev/null || return 1
+    fi
+}
+
+_chrome_write_windows_mcp_launcher() {
+    local appdata appdata_linux node_path node_win npm_cli mcp_cli mcp_cli_win data_dir
+    local node_q cli_q data_q
+    appdata=$(_chrome_windows_local_appdata) || {
+        echo 'PowerShell Windows est nécessaire pour configurer Chrome hôte.' >&2
+        return 1
+    }
+    appdata_linux=$(wslpath -u "$appdata") || return 1
+    if [ -z "${CHROME_HOST_USER_DATA_DIR:-}" ]; then
+        CHROME_HOST_USER_DATA_DIR="$appdata\Google\Chrome\User Data"
+    fi
+    CHROME_HOST_USER_DATA_DIR=$(_chrome_windows_path "$CHROME_HOST_USER_DATA_DIR") || return 1
+    data_dir=$(wslpath -u "$CHROME_HOST_USER_DATA_DIR" 2>/dev/null) || data_dir=''
+    [ -n "$data_dir" ] && [ -d "$data_dir" ] || {
+        echo "Dossier de données Chrome Windows introuvable : $CHROME_HOST_USER_DATA_DIR" >&2
+        echo 'Choisis d’abord un dossier existant dans Configuration > Profil hôte.' >&2
+        return 1
+    }
+
+    node_path="${CHROME_HOST_NODE:-}"
+    if [ -n "$node_path" ]; then
+        case "$node_path" in [A-Za-z]:*) node_path=$(wslpath -u "$node_path") ;; esac
+    else
+        for node_path in \
+            "$appdata_linux/codex-chrome-mcp/node-v24.22.2-win-x64/node.exe" \
+            "$appdata_linux/chromemcp/node/node.exe"; do
+            [ -x "$node_path" ] && break
+            node_path=''
+        done
+        if [ -z "$node_path" ]; then
+            node_win=$(powershell.exe -NoProfile -Command '(Get-Command node.exe -ErrorAction SilentlyContinue).Source' 2>/dev/null | tr -d '\r')
+            [ -n "$node_win" ] && node_path=$(wslpath -u "$node_win" 2>/dev/null)
+        fi
+    fi
+    [ -n "$node_path" ] && [ -x "$node_path" ] || {
+        echo 'Node.js pour Windows est requis pour lancer le MCP sur l’hôte.' >&2
+        echo 'Installe Node.js LTS pour Windows ou définis CHROME_HOST_NODE.' >&2
+        return 1
+    }
+
+    mcp_cli="$appdata_linux/chromemcp/mcp/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"
+    if [ ! -r "$mcp_cli" ]; then
+        npm_cli="$(dirname -- "$node_path")/node_modules/npm/bin/npm-cli.js"
+        [ -r "$npm_cli" ] || {
+            echo 'npm-cli.js introuvable à côté du Node Windows sélectionné.' >&2
+            echo 'Installe Node.js LTS pour Windows avec npm, puis réessaie.' >&2
+            return 1
+        }
+        npm_cli=$(wslpath -w "$npm_cli") || return 1
+        mkdir -p "$appdata_linux/chromemcp" || return 1
+        if ! (cd "$appdata_linux/chromemcp" && "$node_path" "$npm_cli" install \
+            --prefix "$appdata\chromemcp\mcp" --no-audit --no-fund chrome-devtools-mcp@latest); then
+            echo 'Installation de Chrome DevTools MCP côté Windows impossible.' >&2
+            return 1
+        fi
+    fi
+    mcp_cli_win=$(wslpath -w "$mcp_cli") || return 1
+    printf -v node_q '%q' "$node_path"
+    printf -v cli_q '%q' "$mcp_cli_win"
+    printf -v data_q '%q' "$CHROME_HOST_USER_DATA_DIR"
+    mkdir -p "$(dirname -- "$CHROME_HOST_MCP_LAUNCHER")" || return 1
+    cat >"$CHROME_HOST_MCP_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+set -e
+exec ${node_q} ${cli_q} --autoConnect --user-data-dir ${data_q} --no-usage-statistics
+EOF
+    chmod 700 "$CHROME_HOST_MCP_LAUNCHER" || return 1
+    printf '%s\n' "$CHROME_HOST_MCP_LAUNCHER"
+}
+
+_chrome_mcp_add_server() {
+    local client="$1" target="$2" port="$3" name command json
+    local -a args=()
+    if [ "$target" = 'windows' ]; then
+        name='chrome-windows'
+        command="$CHROME_HOST_MCP_LAUNCHER"
+    else
+        name="chrome-wsl-${port}"
+        command="$CHROME_MCP_COMMAND"
+        args=(-y chrome-devtools-mcp@latest --browser-url "http://127.0.0.1:${port}" --no-usage-statistics)
+    fi
+
+    case "$client" in
+        codex)
+            if ! command -v codex >/dev/null 2>&1; then echo 'Codex CLI introuvable.' >&2; return 1; fi
+            if [ "$target" = 'wsl' ] && [ "$port" = "$CHROME_DEFAULT_PORT" ]; then
+                local current_codex
+                current_codex=$(codex mcp get chrome 2>/dev/null || true)
+                if [[ "$current_codex" == *"127.0.0.1:${port}"* ]]; then
+                    echo "Codex utilise déjà Chrome WSL sur le port ${port} (serveur chrome conservé)."
+                    return 0
+                fi
+            fi
+            codex mcp remove "$name" >/dev/null 2>&1 || true
+            codex mcp add "$name" -- "$command" "${args[@]}" || return 1
+            echo "Serveur Codex configuré : $name"
+            ;;
+        claude)
+            if ! command -v claude >/dev/null 2>&1; then echo 'Claude Code introuvable.' >&2; return 1; fi
+            if [ "$target" = 'wsl' ]; then name="chrome-${port}"; fi
+            if [ "$target" = 'wsl' ] && claude mcp get "$name" >/dev/null 2>&1; then
+                echo "Claude Code possède déjà le serveur WSL ${name} ; configuration conservée."
+                return 0
+            fi
+            json=$(python3 - "$command" "${args[@]}" <<'PY'
+import json, sys
+print(json.dumps({"type": "stdio", "command": sys.argv[1], "args": sys.argv[2:]}))
+PY
+) || return 1
+            claude mcp remove --scope user "$name" >/dev/null 2>&1 || true
+            claude mcp add-json --scope user "$name" "$json" || return 1
+            echo "Serveur Claude Code configuré : $name"
+            ;;
+    esac
+}
+
+_chrome_mcp_config_menu() {
+    local target client port
+    while true; do
+    printf '\nConfigurer les connexions MCP\n  [w] Chrome WSL\n  [h] Chrome hôte Windows\n  [r] Retour\nChoix [w/h/r] : '
+    read -r target </dev/tty || { echo; return 1; }
+    case "$target" in
+        w|W)
+            printf 'Port DevTools WSL à configurer [%s] : ' "$CHROME_DEFAULT_PORT"
+            read -r port </dev/tty || { echo; return 1; }
+            port="${port:-$CHROME_DEFAULT_PORT}"
+            [[ "$port" =~ ^[0-9]+$ ]] || { echo 'Port invalide.'; return 1; }
+            target='wsl'
+            ;;
+        h|H)
+            _chrome_write_windows_mcp_launcher >/dev/null || return 1
+            target='windows'
+            ;;
+        r|R) return 0 ;;
+        *) echo 'Choix invalide.'; continue ;;
+    esac
+    printf '  [b] Codex et Claude Code\n  [c] Codex\n  [l] Claude Code\n  [r] Retour\nClients [b/c/l/r] : '
+    read -r client </dev/tty || { echo; return 1; }
+    case "$client" in
+        b|B)
+            _chrome_mcp_add_server codex "$target" "$port" || return 1
+            _chrome_mcp_add_server claude "$target" "$port" || return 1
+            ;;
+        c|C) _chrome_mcp_add_server codex "$target" "$port" || return 1 ;;
+        l|L) _chrome_mcp_add_server claude "$target" "$port" || return 1 ;;
+        r|R) continue ;;
+        *) echo 'Choix invalide.'; continue ;;
+    esac
+    printf 'Redémarre les clients configurés pour charger le nouveau serveur MCP.\n'
+    done
+}
+
+_chrome_config_menu() {
+    local action
+    while true; do
+    printf '\nConfiguration Chrome\n'
+    printf '  [w] Choisir le profil par défaut de Chrome WSL\n'
+    printf '  [h] Choisir le profil de Chrome hôte Windows\n'
+    printf '  [m] Configurer les connexions MCP de Claude/Codex\n'
+    printf '  [r] Retour\nChoix [w/h/m/r] : '
+    read -r action </dev/tty || { echo; return 1; }
+    case "$action" in
+        w|W) _chrome_profile_menu_wsl ;;
+        h|H) _chrome_profile_menu_host ;;
+        m|M) _chrome_mcp_config_menu ;;
+        r|R) return 0 ;;
+        *) echo 'Choix invalide.' ;;
+    esac
+    done
+}
+
 chrome() {
     _chrome_list_running
 
@@ -212,10 +633,11 @@ chrome() {
     fi
 
     if [ "$explicit" -eq 0 ]; then
+      while true; do
         if [ "${_CHROME_RUNNING_COUNT:-0}" -gt 0 ]; then
-            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [k] Arrêter une instance existante\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/k/r/g/q] : '
+            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [k] Arrêter une instance existante\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/k/c/r/g/q] : '
         else
-            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/r/g/q] : '
+            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/c/r/g/q] : '
         fi
         if ! read -r action </dev/tty; then
             echo
@@ -225,10 +647,13 @@ chrome() {
         case "$action" in
             n|N) launch_confirmed=1 ;;
             k|K) _chrome_stop_instance; return $? ;;
+            c|C) _chrome_config_menu; _chrome_list_running ;;
             r|R) _chrome_reload; return $? ;;
             g|G) _chrome_update; return $? ;;
             *) echo "Action annulée."; return 0 ;;
         esac
+        [ "$launch_confirmed" -eq 1 ] && break
+      done
     fi
 
     [ -n "$CHROME_KEYMAP" ] && command -v setxkbmap >/dev/null 2>&1 \
@@ -332,7 +757,7 @@ chrome() {
         --remote-debugging-port="${port}" \
         --remote-debugging-address=127.0.0.1 \
         --user-data-dir="${data_dir}" \
-        --profile-directory=Default \
+        --profile-directory="${CHROME_PROFILE_NAME}" \
         --no-first-run \
         --no-default-browser-check \
         --disable-sync \

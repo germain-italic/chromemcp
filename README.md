@@ -9,22 +9,33 @@ Exemple fictif. Les titres d’onglets sont visibles ; les PID, ports et noms so
 ```console
 $ chrome
 Instances Chrome actuellement lancées :
-  PID 18421   port 9222  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 profil=~/.chrome-debug
-    Onglets : Documentation API | Tableau de bord local | Tests de connexion
-  PID 18703   port 9922  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 profil=~/.chrome-debug-9922
-    Onglets : Pull requests | Logs de test
+  Port 9222 — PID 18421 — Profil : ~/.chrome-debug
+    État : DevTools disponible
+    • docs.example.com — Documentation API
+    • app.example.com — Tableau de bord local
+    • auth.example.com — Tests de connexion
+  Port 9922 — PID 18703 — Profil : ~/.chrome-debug-9922
+    État : DevTools disponible
+    • github.com — Pull requests
+    • logs.example.com — Logs de test
 Que veux-tu faire ?
   [n] Lancer une instance Chrome
   [k] Arrêter une instance existante
+  [c] Configuration
   [r] Recharger le script local
   [g] Actualiser depuis Git
   [q] Annuler
 Choix [n/k/r/g/q] : k
 Instances Chrome disponibles :
   1) port 9222 — PID 18421 — ~/.chrome-debug
-     Onglets : Documentation API | Tableau de bord local | Tests de connexion
+     DevTools : disponible
+     • docs.example.com — Documentation API
+     • app.example.com — Tableau de bord local
+     • auth.example.com — Tests de connexion
   2) port 9922 — PID 18703 — ~/.chrome-debug-9922
-     Onglets : Pull requests | Logs de test
+     DevTools : disponible
+     • github.com — Pull requests
+     • logs.example.com — Logs de test
 Quelle instance arrêter ? (numéro, Entrée pour annuler) 2
 Arrêter Chrome sur le port 9922 (PID 18703) ? [y/N] y
 Signal d’arrêt envoyé à Chrome sur le port 9922 (PID 18703).
@@ -32,11 +43,12 @@ Signal d’arrêt envoyé à Chrome sur le port 9922 (PID 18703).
 
 ## Fonctions
 
-- `chrome` affiche les instances de débogage déjà lancées : port, PID, profil, environnement graphique et titres de quelques onglets.
+- `chrome` affiche les instances de débogage déjà lancées : port, PID, profil, état DevTools et titres d’onglets préfixés par leur nom d’hôte.
 - Si une instance existe et qu’aucun port n’est donné, `chrome` propose de lancer une autre instance, d’en arrêter une ou d’annuler.
-- Sans port explicite, `chrome` propose `[r] Recharger le script local` pour recharger immédiatement la copie du dépôt dans le shell courant, sans réseau, et `[g] Actualiser depuis Git` pour faire un `git pull --ff-only` puis recharger `~/.bashrc`.
-- Chaque instance utilise un port DevTools et un profil Chrome distincts. Le port par défaut est `9222` ; les autres ports sont choisis dans la plage `9300–9999`.
+- Sans port explicite, `chrome` propose `[c] Configuration`, `[r] Recharger le script local` pour recharger immédiatement la copie du dépôt sans réseau, et `[g] Actualiser depuis Git` pour faire un `git pull --ff-only` puis recharger `~/.bashrc`.
+- Chaque instance utilise un port DevTools et un profil Chrome distincts. Le port par défaut est `9222` ; les autres ports sont choisis dans la plage `9300–9999`. Chrome verrouille un dossier de profil : deux instances simultanées ne peuvent pas partager le même dossier.
 - L’option d’arrêt du menu affiche les ports et titres, puis demande le numéro de l’instance et une confirmation.
+- La liste signale les dossiers de profil connus sans instance active ; elle ne les supprime pas.
 - DevTools écoute sur `127.0.0.1` uniquement.
 
 ## Prérequis
@@ -78,29 +90,17 @@ source ~/.bashrc
 
 Le script ne modifie pas lui-même `.bashrc`. Adapte le chemin si tu as cloné le dépôt ailleurs.
 
-## Configurer Chrome DevTools MCP
+## Configurer les connexions MCP
 
-Ajoute le serveur du port par défaut au champ `mcpServers` de la configuration de Claude Code (`~/.claude.json`). Fusionne cette entrée avec les serveurs déjà présents :
+Le menu `chrome` distingue Chrome lancé dans WSL de Chrome lancé sur Windows. Choisis `c`, puis `m` :
 
-```json
-{
-  "mcpServers": {
-    "chrome-9222": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--browser-url",
-        "http://127.0.0.1:9222",
-        "--no-usage-statistics"
-      ]
-    }
-  }
-}
-```
+- `w` configure Chrome WSL sur le port choisi, par exemple `9222`.
+- `h` configure Chrome hôte Windows via son mode Remote Debugging. Chrome doit l’avoir activé dans `chrome://inspect/#remote-debugging`.
+- Choisis `b` pour enregistrer les deux cibles dans Codex et Claude Code, ou configure un client seul.
 
-Redémarre Claude Code après avoir modifié sa configuration MCP. Pour un port non standard, `chrome` écrit automatiquement un fichier de configuration et affiche la commande `claude --mcp-config …` à utiliser.
+Les serveurs sont ajoutés à la configuration globale de chaque client. Les cibles Windows sont nommées `chrome-windows` ; les nouvelles cibles WSL `chrome-wsl-PORT`. Une connexion WSL existante sur le port par défaut est conservée. Redémarre Codex et Claude Code pour charger les changements. Chrome peut demander d’autoriser la connexion de débogage.
+
+Pour Chrome hôte, le script utilise un lanceur MCP natif Windows et Node.js Windows. Il détecte le runtime portable installé dans `%LOCALAPPDATA%\codex-chrome-mcp` ou un `node.exe` disponible sous Windows ; sinon, installe Node.js LTS pour Windows et relance la configuration. Le menu permet de choisir un dossier `User Data` Windows parmi ceux détectés ou d’en saisir le chemin. Il affiche aussi les sous-profils trouvés. Le chemin reste distinct de celui de Chrome WSL, car les deux systèmes ne doivent pas partager directement un même dossier de profil.
 
 ## Utilisation
 
@@ -111,13 +111,13 @@ chrome 9633                    # lance ou rejoint l'instance sur 9633
 chrome 9633 https://example.org
 ```
 
-Quand tu lances `chrome` sans port, le menu propose de lancer une instance avec `n`, de recharger la copie locale avec `r`, d’actualiser depuis Git avec `g`, ou d’annuler. Si des instances existent, il propose aussi de les arrêter : choisis `k`, sélectionne l’instance par son numéro, puis confirme. Le script vérifie à nouveau le port et le profil avant d’envoyer `SIGTERM` au processus maître. Aucun PID n’est à saisir.
+Quand tu lances `chrome` sans port, le menu propose de lancer une instance avec `n`, d’ouvrir la configuration avec `c`, de recharger la copie locale avec `r`, d’actualiser depuis Git avec `g`, ou d’annuler. La configuration permet de choisir les profils WSL et Windows, et de relier Codex, Claude Code, ou les deux à Chrome WSL et/ou Chrome hôte. Si des instances WSL existent, le menu propose aussi de les arrêter : choisis `k`, sélectionne l’instance par son numéro, puis confirme.
 
 Pour recharger les fonctions depuis les fichiers locaux sans toucher au dépôt, choisis `r`. Pour actualiser le dépôt et recharger les fonctions dans le shell courant, choisis `g`. La mise à jour utilise `git pull --ff-only` ; elle s’interrompt si une fusion serait nécessaire.
 
 Si `9222` est déjà utilisé et que tu choisis de lancer, `chrome` sélectionne un port libre dans `9300–9999`. Un port passé en argument, par exemple `chrome 9633`, cible directement cette instance et saute le menu.
 
-Les profils sont enregistrés dans `~/.chrome-debug` pour le port par défaut, puis dans `~/.chrome-debug-PORT` pour les autres ports. Les journaux d’une instance se trouvent dans `chrome.stderr.log`, dans son profil.
+Les profils WSL sont enregistrés dans `~/.chrome-debug` pour le port par défaut, puis dans `~/.chrome-debug-PORT` pour les autres ports. Le menu `c` permet de choisir un dossier de données Chrome WSL parmi ceux détectés ou d’en saisir le chemin, puis un sous-profil présent dans ce dossier (`Default`, `Profile 1`, etc.). Le chemin racine est mémorisé dans `~/.config/chromemcp/profile-dir` et le sous-profil dans `~/.config/chromemcp/profile-name` ; ceux de Chrome hôte sont mémorisés dans `~/.config/chromemcp/host-user-data-dir`. Une variable `CHROME_PROFILE_DIR` définie dans l’environnement prend priorité pour Chrome WSL. Les journaux des instances WSL se trouvent dans `chrome.stderr.log`, dans leur profil.
 
 ## Réglages
 
@@ -127,6 +127,13 @@ Déclare ces variables avant la ligne `source` dans `.bashrc` pour remplacer les
 | --- | --- | --- |
 | `CHROME_DEFAULT_PORT` | `9222` | Port de l’instance par défaut |
 | `CHROME_PROFILE_DIR` | `$HOME/.chrome-debug` | Répertoire racine des profils |
+| `CHROME_PROFILE_CONFIG` | `$HOME/.config/chromemcp/profile-dir` | Fichier où le menu `c` enregistre le profil par défaut |
+| `CHROME_PROFILE_NAME` | `Default` | Sous-profil Chrome WSL à ouvrir, par exemple `Profile 1` |
+| `CHROME_PROFILE_NAME_CONFIG` | `$HOME/.config/chromemcp/profile-name` | Fichier où le menu `c` enregistre le sous-profil WSL |
+| `CHROME_HOST_USER_DATA_DIR` | Profil Stable de Windows | Dossier de données Windows pour la connexion MCP hôte |
+| `CHROME_HOST_PROFILE_CONFIG` | `$HOME/.config/chromemcp/host-user-data-dir` | Fichier où le menu `c` enregistre le dossier Windows |
+| `CHROME_HOST_NODE` | détection automatique | Chemin du `node.exe` Windows si son emplacement est personnalisé |
+| `CHROME_HOST_MCP_LAUNCHER` | `$HOME/.local/bin/chrome-windows-mcp` | Lanceur MCP pour le Chrome Windows |
 | `CHROME_KEYMAP` | `fr` | Disposition clavier appliquée au lancement ; vide pour la désactiver |
 | `CHROME_BIN` | `google-chrome` | Binaire Chrome |
 | `CLAUDE_CONFIG_DIR` | `$HOME/.claude` | Répertoire des configurations MCP générées |
