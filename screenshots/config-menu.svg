@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="400" viewBox="0 0 960 400" role="img" aria-labelledby="title desc">
+  <title id="title">Menu Configuration Chrome</title>
+  <desc id="desc">Le menu Configuration propose notamment le choix de la taille de la fenêtre au lancement.</desc>
+  <rect width="960" height="400" rx="14" fill="#0b1220"/>
+  <path d="M14 0h932a14 14 0 0 1 14 14v34H0V14A14 14 0 0 1 14 0Z" fill="#1e293b"/>
+  <circle cx="25" cy="24" r="6" fill="#f87171"/><circle cx="47" cy="24" r="6" fill="#fbbf24"/><circle cx="69" cy="24" r="6" fill="#4ade80"/>
+  <text x="480" y="29" fill="#cbd5e1" font-family="sans-serif" font-size="14" text-anchor="middle">germain@G18: ~</text>
+  <g fill="#e2e8f0" font-family="DejaVu Sans Mono, monospace" font-size="18">
+    <text x="28" y="88">Configuration Chrome</text>
+    <text x="28" y="122">  [w] Choisir le profil par défaut de Chrome WSL</text>
+    <text x="28" y="156">  [h] Choisir le profil de Chrome hôte Windows</text>
+    <text x="28" y="190" fill="#7dd3fc">  [t] Définir la taille de la fenêtre au lancement</text>
+    <text x="28" y="224">  [m] Configurer les connexions MCP de Claude/Codex</text>
+    <text x="28" y="258">  [r] Retour</text>
+    <text x="28" y="290">Choix [w/h/t/m/r] : <tspan fill="#4ade80">t</tspan></text>
+  </g>
+</svg>

@@ -16,6 +16,14 @@ if [ -z "${CHROME_PROFILE_NAME+x}" ]; then
     fi
 fi
 : "${CHROME_PROFILE_NAME:=Default}"
+: "${CHROME_WINDOW_SIZE_CONFIG:=$HOME/.config/chromemcp/window-size}"
+if [ -z "${CHROME_WINDOW_SIZE+x}" ] && [ -r "$CHROME_WINDOW_SIZE_CONFIG" ]; then
+    IFS= read -r CHROME_WINDOW_SIZE <"$CHROME_WINDOW_SIZE_CONFIG" || true
+fi
+: "${CHROME_WINDOW_SIZE:=1920x1080}"
+if [[ "$CHROME_WINDOW_SIZE" != 'maximized' && ! "$CHROME_WINDOW_SIZE" =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]]; then
+    CHROME_WINDOW_SIZE='1920x1080'
+fi
 : "${CHROME_HOST_PROFILE_CONFIG:=$HOME/.config/chromemcp/host-user-data-dir}"
 if [ -z "${CHROME_HOST_USER_DATA_DIR+x}" ]; then
     if [ -r "$CHROME_HOST_PROFILE_CONFIG" ]; then
@@ -55,6 +63,41 @@ _chrome_wslg_ready() {
 _chrome_data_dir() {
     if [ "$1" = "$CHROME_DEFAULT_PORT" ]; then echo "$CHROME_PROFILE_DIR"
     else echo "${CHROME_PROFILE_DIR}-$1"; fi
+}
+
+# Chrome mémorise l'état maximisé dans Preferences. Mettre à jour ce seul
+# indicateur conserve les coordonnées enregistrées, dont l'écran.
+_chrome_set_profile_window_state() {
+    local preferences="$1/$CHROME_PROFILE_NAME/Preferences"
+    local maximized="$2"
+    [ -f "$preferences" ] && command -v python3 >/dev/null 2>&1 || return 0
+    python3 - "$preferences" "$maximized" <<'PY'
+import json, os, stat, sys, tempfile
+
+path = sys.argv[1]
+maximized = sys.argv[2] == "true"
+try:
+    with open(path, encoding="utf-8") as stream:
+        data = json.load(stream)
+    placement = data.get("browser", {}).get("window_placement")
+    if not isinstance(placement, dict) or placement.get("maximized") == maximized:
+        raise SystemExit(0)
+    placement["maximized"] = maximized
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, ensure_ascii=False, separators=(",", ":"))
+            stream.write("\n")
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+except (OSError, ValueError, TypeError) as error:
+    print(f"Impossible de restaurer la taille normale de Chrome : {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 }
 
 _chrome_process_profile() {
@@ -238,7 +281,8 @@ _chrome_stop_instance() {
     pid="${pids[selected]}"; port="${ports[selected]}"; profile="${profiles[selected]}"
     [ -r "/proc/${pid}/cmdline" ] || { echo "Le processus a déjà quitté."; return 0; }
     cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline")
-    if [[ "$cmdline" != *"--remote-debugging-port=${port}"* || "$cmdline" != *"--user-data-dir=${profile}"* ]]; then
+    if [[ ! " $cmdline " =~ [[:space:]]--remote-debugging-port=${port}[[:space:]] ]] || \
+        { [ "$profile" != 'inconnu' ] && [[ "$cmdline" != *"--user-data-dir=${profile}"* ]]; }; then
         echo "Le processus ne correspond plus à l'instance choisie ; arrêt refusé." >&2
         return 1
     fi
@@ -266,6 +310,7 @@ _chrome_reload() {
     # shellcheck disable=SC1090
     source "$CHROME_SCRIPT_DIR/chrome.sh" || return 1
     echo "Script local rechargé depuis $CHROME_SCRIPT_DIR/chrome.sh."
+    chrome
 }
 
 # Renvoie les noms de profils Chrome présents dans un dossier de données.
@@ -465,7 +510,7 @@ _chrome_write_windows_mcp_launcher() {
     data_dir=$(wslpath -u "$CHROME_HOST_USER_DATA_DIR" 2>/dev/null) || data_dir=''
     [ -n "$data_dir" ] && [ -d "$data_dir" ] || {
         echo "Dossier de données Chrome Windows introuvable : $CHROME_HOST_USER_DATA_DIR" >&2
-        echo 'Choisis d’abord un dossier existant dans Configuration > Profil hôte.' >&2
+        echo 'Sélectionnez d’abord un dossier existant dans Configuration > Profil hôte.' >&2
         return 1
     }
 
@@ -598,7 +643,47 @@ _chrome_mcp_config_menu() {
         r|R) continue ;;
         *) echo 'Choix invalide.'; continue ;;
     esac
-    printf 'Redémarre les clients configurés pour charger le nouveau serveur MCP.\n'
+    printf 'Redémarrez les clients configurés pour charger le nouveau serveur MCP.\n'
+    done
+}
+
+_chrome_window_size_menu() {
+    local choice size width height
+    while true; do
+        printf '\nTaille au lancement (actuelle : %s)\n' "$CHROME_WINDOW_SIZE"
+        printf '  [1] 1280x720 — HD\n  [2] 1600x900 — HD+\n  [3] 1920x1080 — Full HD\n'
+        printf '  [4] 2560x1440 — QHD\n  [5] 3840x2160 — 4K\n  [m] Maximisée\n  [c] Personnalisée (Lxl)\n  [r] Retour\nChoix [1/2/3/4/5/m/c/r] : '
+        read -r choice </dev/tty || { echo; return 1; }
+        case "$choice" in
+            1) size='1280x720' ;;
+            2) size='1600x900' ;;
+            3) size='1920x1080' ;;
+            4) size='2560x1440' ;;
+            5) size='3840x2160' ;;
+            m|M) size='maximized' ;;
+            c|C)
+                printf 'Taille personnalisée (largeurxhauteur, ex. 1366x768) : '
+                read -r size </dev/tty || { echo; return 1; }
+                if [[ "$size" =~ ^([0-9]{3,5})[xX]([0-9]{3,5})$ ]]; then
+                    width=$((10#${BASH_REMATCH[1]}))
+                    height=$((10#${BASH_REMATCH[2]}))
+                    if (( width < 320 || width > 16384 || height < 240 || height > 16384 )); then
+                        echo 'Dimensions hors limites (largeur 320–16384, hauteur 240–16384).'
+                        continue
+                    fi
+                    size="${width}x${height}"
+                else
+                    echo 'Format invalide ; utilisez largeurxhauteur, par exemple 1366x768.'
+                    continue
+                fi
+                ;;
+            r|R) return 0 ;;
+            *) echo 'Choix invalide.'; continue ;;
+        esac
+        mkdir -p "$(dirname -- "$CHROME_WINDOW_SIZE_CONFIG")" || return 1
+        printf '%s\n' "$size" >"$CHROME_WINDOW_SIZE_CONFIG" || return 1
+        CHROME_WINDOW_SIZE="$size"
+        printf 'Taille au lancement enregistrée : %s\n' "$CHROME_WINDOW_SIZE"
     done
 }
 
@@ -608,12 +693,14 @@ _chrome_config_menu() {
     printf '\nConfiguration Chrome\n'
     printf '  [w] Choisir le profil par défaut de Chrome WSL\n'
     printf '  [h] Choisir le profil de Chrome hôte Windows\n'
+    printf '  [t] Définir la taille de la fenêtre au lancement\n'
     printf '  [m] Configurer les connexions MCP de Claude/Codex\n'
-    printf '  [r] Retour\nChoix [w/h/m/r] : '
+    printf '  [r] Retour\nChoix [w/h/t/m/r] : '
     read -r action </dev/tty || { echo; return 1; }
     case "$action" in
         w|W) _chrome_profile_menu_wsl ;;
         h|H) _chrome_profile_menu_host ;;
+        t|T) _chrome_window_size_menu ;;
         m|M) _chrome_mcp_config_menu ;;
         r|R) return 0 ;;
         *) echo 'Choix invalide.' ;;
@@ -621,7 +708,7 @@ _chrome_config_menu() {
     done
 }
 
-chrome() {
+_chrome_action() {
     _chrome_list_running
 
     # Un port passé en argument (ou dans CHROME_DEBUG_PORT) exprime déjà le choix.
@@ -635,9 +722,9 @@ chrome() {
     if [ "$explicit" -eq 0 ]; then
       while true; do
         if [ "${_CHROME_RUNNING_COUNT:-0}" -gt 0 ]; then
-            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [k] Arrêter une instance existante\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/k/c/r/g/q] : '
+            printf '\nQue souhaitez-vous faire ?\n  [n] Lancer une instance Chrome\n  [k] Arrêter une instance existante\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Quitter\nChoix [n/k/c/r/g/q] : '
         else
-            printf '\nQue veux-tu faire ?\n  [n] Lancer une instance Chrome\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Annuler\nChoix [n/c/r/g/q] : '
+            printf '\nQue souhaitez-vous faire ?\n  [n] Lancer une instance Chrome\n  [c] Configuration\n  [r] Recharger le script local\n  [g] Actualiser depuis Git\n  [q] Quitter\nChoix [n/c/r/g/q] : '
         fi
         if ! read -r action </dev/tty; then
             echo
@@ -646,11 +733,15 @@ chrome() {
         fi
         case "$action" in
             n|N) launch_confirmed=1 ;;
-            k|K) _chrome_stop_instance; return $? ;;
+            k|K) _chrome_stop_instance; _chrome_list_running ;;
             c|C) _chrome_config_menu; _chrome_list_running ;;
-            r|R) _chrome_reload; return $? ;;
-            g|G) _chrome_update; return $? ;;
-            *) echo "Action annulée."; return 0 ;;
+            r|R)
+                _chrome_reload || return $?
+                return 98
+                ;;
+            g|G) _chrome_update; _chrome_list_running ;;
+            q|Q) echo "Session chrome terminée."; return 99 ;;
+            *) echo "Choix invalide." ;;
         esac
         [ "$launch_confirmed" -eq 1 ] && break
       done
@@ -666,6 +757,14 @@ chrome() {
     # au cas où un reset la remettrait à 'default'.
     local gtk_theme="${GTK_THEME:-}"
     local -a appearance_args=()
+    local -a window_args=()
+    local window_maximized=false
+    if [ "$CHROME_WINDOW_SIZE" = 'maximized' ]; then
+        window_args+=(--start-maximized)
+        window_maximized=true
+    else
+        window_args+=("--window-size=${CHROME_WINDOW_SIZE/x/,}")
+    fi
     if [ "$CHROME_DARK" = "1" ]; then
         appearance_args+=(--force-dark-mode)
         # Adwaita:dark est fourni par la libgtk ; son absence de
@@ -724,7 +823,7 @@ chrome() {
     # supposition. Un port en écoute sans endpoint DevTools est un conflit.
     if ss -ltnH "sport = :${port}" 2>/dev/null | grep -q .; then
         echo "Le port ${port} est déjà occupé, mais ne répond pas à DevTools." >&2
-        echo "Choisis un autre port (ex. : chrome 9223) ou ferme le processus qui l'utilise." >&2
+        echo "Choisissez un autre port (ex. : chrome 9223) ou fermez le processus qui l'utilise." >&2
         return 1
     fi
 
@@ -734,6 +833,7 @@ chrome() {
     [ "$port" != "$CHROME_DEFAULT_PORT" ] && mcp_flag="--mcp-config $(_chrome_write_mcp_config "$port") --disallowedTools \"mcp__chrome-${CHROME_DEFAULT_PORT}__*\""
 
     mkdir -p "$data_dir" || { echo "Impossible de créer ${data_dir}" >&2; return 1; }
+    _chrome_set_profile_window_state "$data_dir" "$window_maximized" || return 1
 
     echo "════════════════════════════════════════════════════"
     echo "  Chrome debug sur le port : ${port}"
@@ -742,7 +842,7 @@ chrome() {
     echo "  Session Claude Code liée à ce Chrome :"
     echo "    claude --resume ${mcp_flag}"
     echo "    claude --dangerously-skip-permissions --resume ${mcp_flag}   # yolo"
-    [ "$port" = "$CHROME_DEFAULT_PORT" ] && echo "    (chrome-${CHROME_DEFAULT_PORT} est déjà dans ta config globale)"
+    [ "$port" = "$CHROME_DEFAULT_PORT" ] && echo "    (chrome-${CHROME_DEFAULT_PORT} est déjà dans votre config globale)"
     echo "    (--resume ouvre le sélecteur de sessions du dossier courant ; à retirer pour une session vierge)"
     echo "════════════════════════════════════════════════════"
 
@@ -765,7 +865,7 @@ chrome() {
         --disable-background-networking \
         --disable-popup-blocking \
         --new-window \
-        --start-maximized \
+        "${window_args[@]}" \
         "${appearance_args[@]}" \
         "$@" >"${data_dir}/chrome.stderr.log" 2>&1 &
     local chrome_pid=$!
@@ -784,4 +884,32 @@ chrome() {
 
     echo "Chrome n'a pas démarré correctement ; consulte ${data_dir}/chrome.stderr.log" >&2
     return 1
+}
+
+chrome() {
+    local had_debug_port="${CHROME_DEBUG_PORT+x}" saved_debug_port="${CHROME_DEBUG_PORT-}" status
+    local -a initial_args=("$@")
+    unset CHROME_DEBUG_PORT
+
+    while true; do
+        _chrome_action "${initial_args[@]}"
+        status=$?
+        initial_args=()
+        if [ "$status" -eq 99 ]; then
+            break
+        fi
+        if [ "$status" -eq 98 ]; then
+            break
+        fi
+        if [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+            break
+        fi
+    done
+
+    if [ "$had_debug_port" = x ]; then
+        CHROME_DEBUG_PORT="$saved_debug_port"
+    else
+        unset CHROME_DEBUG_PORT
+    fi
+    return 0
 }
