@@ -206,3 +206,5 @@ Ce projet est distribué sous licence MIT. Voir [LICENSE](LICENSE).
 
 ## Documentation complémentaire
 
+Voir la [feuille de route](ROADMAP.md) pour les évolutions prévues.
+
